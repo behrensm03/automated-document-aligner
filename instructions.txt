@@ -1,0 +1,43 @@
+Automated Document Aligner (Midterm Project)
+Goal: To automatically process a distorted image of a document and output a perfectly rectified,
+frontal view of the page, demonstrating mastery of classical computer vision techniques covered
+in class.
+
+Material Covered: This project draws primarily from Image Processing (Class 4), Features
+(Classes 5-6), and Geometric / Planar Transforms (Classes 7-8).
+
+Project Overview:
+- Build a computer vision pipeline to take an image of a document from the provided synthetic
+dataset and transform it into a flat, frontal perspective. The input images show a letter-sized
+document (11”x8.5”) at various angles and with simulated real-world deformations. Some of the
+samples may pose a difficult challenge for a simple method!
+- Your final submission will be a single Python script that processes all images in a given input
+folder and saves the rectified outputs to a new folder.
+
+Key Technical Steps
+Your automatic system must implement the following steps:
+1. Preprocessing and Binarization (Class 4):
+    - Load the input image.
+    - Apply appropriate filtering (e.g., Gaussian, Bilateral) to reduce noise while preserving edges.
+    - Use binarization techniques (e.g., Otsu's method, Adaptive Thresholding, or a custom histogram-based approach) 
+        to segment the relatively bright document from the background. This will result in a clear binary image of the 
+        document contour.
+2. Feature and Contour Extraction (Classes 5-6):
+    - Find the dominant edges of the document, potentially using an edge detector like Canny.
+    - Extract the contour corresponding to the perimeter of the document.
+        Alternative: Use the Hough Transform to detect the four most prominent lines that form the document boundaries.
+3. Corner Detection / Localization (Classes 5-6):
+    - From the extracted contour, you must determine the precise sub-pixel coordinates of the four corners of the document.
+    - Hint 1: Simplify the complex contour to just four vertices using a curve approximation algorithm 
+        (like Ramer–Douglas–Peucker which exists in OpenCV).
+    - Hint 2: If you used the Hough Transform, find the intersections of the four detected lines.
+    - Note: You must ensure the four corners are ordered consistently (e.g., clockwise starting from the top-left) 
+        for the next step.
+    - You may want to work in a lower resolution for some steps, and then refine them in a higher resolution if needed.
+4. Geometric Rectification (Classes 7-8):
+    - Define the source points (the four detected corners in the input image) and the
+        destination points (the corners of the desired, rectified output rectangle).
+    - Compute the Homography matrix (H) that maps the source points to the destination points. 
+        This will involve solving a system of linear equations using Least Squares optimization. 
+        Consult the OpenCV documentation or AI for finding the right functions to use.
+    - Apply the perspective transform defined by H to the original color image to generate the rectified output.
