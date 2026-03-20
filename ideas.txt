@@ -1,0 +1,3 @@
+we know the doc is in the center, roughly. does cropping help at all with the threshold
+can we pick a patch size, and say, find the patch where this has the lowest average brightness. then assume that's our doc, and that anything too far outside this average is not the document
+or like span a 5x5 patch over the doc, find the brightest one and assume it's the document. anything not with that brightness is not the doc, but have to be within a threshold because of shadows, etc
