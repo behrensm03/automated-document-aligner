@@ -17,7 +17,7 @@ class DocumentAligner:
         self.blur_ksize = (7,7) # Gaussian Blur
         self.bilateral_ksize = 9 # Bilateral Filter
         self.downscale_factor = 0.25 # Scaling down the image
-        self.clean_kernel_size = 5 # Morphological opening kernel size
+        self.clean_kernel_size = 3 # Morphological opening kernel size
 
     def load_image(self, image_num):
         image_path = f'{self.image_folder_path}/input ({image_num}).jpg'
