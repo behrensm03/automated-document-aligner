@@ -49,6 +49,13 @@ class DocumentAligner:
     
     def otsu_threshold(self, image, image_num):
         otsuThresh = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+        # trying artificial floor
+        # initialThresh, _ = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # print(f"Otsu's threshold value: {initialThresh}")
+        # thresh_val = max(initialThresh, 120)  # Set a minimum threshold value
+        # _, otsuThresh = cv2.threshold(image, thresh_val, 255, cv2.THRESH_BINARY)
+
         if self.debug:
             cv2.imwrite(f'{self.debug_dir}/{image_num}/otsuThresh.jpg', otsuThresh)
 
@@ -64,8 +71,8 @@ class DocumentAligner:
     def get_document_contour(self, image, threshold, image_num):
         contours, _ = cv2.findContours(threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         maxContour = max(contours, key=cv2.contourArea)
-        maxContour_full = (maxContour / self.downscale_factor).astype(np.int32)
         if self.debug:
+            maxContour_full = (maxContour / self.downscale_factor).astype(np.int32)
             output = image.copy()
             cv2.drawContours(output, [maxContour_full], -1, (255, 0, 255), 2)
             cv2.imwrite(f'{self.debug_dir}/{image_num}/contours.jpg', output)
@@ -115,47 +122,14 @@ class DocumentAligner:
 
         return ordered
     
-    # TODO: clean this up
-    # homogeneous linear least squares solution for finding a homography
-    def findHomographyLLSQ(self, ptsLeft, ptsRight):
-        # create the A matrix, which is a 2n x 9 matrix, where n is the number of points
-        A = np.repeat(np.array([[0]*9] * len(ptsLeft), np.float32), 2, axis=0)
-        for i in range(len(ptsLeft)):
-            # TODO: your code, populate the A matrix
-            # hint: use the ptsLeft and ptsRight arrays to get the points, and use the i index to put the points in the correct row
-            # e.g. xL,yL = ptsLeft[i] will give you the left point, and xR,yR = ptsRight[i] will give you the right point
-
-            xL,yL = ptsLeft[i]
-            xR,yR = ptsRight[i]
-
-            # according to the guidance above, we need to populate the A matrix with the following two rows for each point:
-            #  [-xL -yL -1 0 0 0 xR*xL xR*yL xR]
-            #  [0 0 0 -xL -yL -1 yR*xL yR*yL yR]
-            # the row index can be figured out using the i index
-            A[2*i] = [-xL, -yL, -1, 0, 0, 0, xR*xL, xR*yL, xR]
-            A[2*i+1] = [0, 0, 0, -xL, -yL, -1, yR*xL, yR*yL, yR]
-
-        # take the SVD of A (`np.linalg.svd`) and pick the last row of Vt (last column of V)
-        # TODO: your code here...
-        u,z,vt = np.linalg.svd(A)
-        # the last row of Vt (e.g. [-1]) is the solution to the homogeneous (Ax=0) linear least squares problem
-        # reshape the vector back to a 3,3 matrix
-        H = vt[-1].reshape(3,3)
-        # normalize the last element to 1 (homogeneous coordinates) by dividing H by the last [2,2] element of H
-        return H / H[2,2]
-    
     def apply_homography(self, image, ordered_points):
-        # use the findHomographyLLSQ function you wrote to find the homography matrix 
-        # # using the pts1 and pts2 arrays 
         dst_points = np.array([
             [0, 0],        # top-left
             [425-1, 0],    # top-right
             [425-1, 550-1],# bottom-right
             [0, 550-1]     # bottom-left
         ], dtype=np.float32)
-        H = self.findHomographyLLSQ(ordered_points, dst_points) 
-        # get the result using warpAndBlendImagesHomography 
-        # lstsqWarp = warpAndblendImagesHomography(im1wide, im2, H)
+        H, _ = cv2.findHomography(ordered_points, dst_points)
         warped = cv2.warpPerspective(image, H, (425, 550))
 
         return warped
@@ -186,10 +160,13 @@ class DocumentAligner:
         # save the final image to the output directory
         os.makedirs(self.out_dir, exist_ok=True)
         cv2.imwrite(f'{self.out_dir}/{image_num}_rectified.jpg', warped)
+        if self.debug:
+            cv2.imwrite(f'{self.debug_dir}/{image_num}/final_warped.jpg', warped)
         print(f'Processed image {image_num}')
 
 # TODO: landscape?
 # TODO: handle error thrown 
+# TODO: kmeans?
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
