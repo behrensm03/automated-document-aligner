@@ -18,6 +18,7 @@ class DocumentAligner:
         self.bilateral_ksize = 9 # Bilateral Filter
         self.downscale_factor = 0.25 # Scaling down the image
         self.clean_kernel_size = 3 # Morphological opening kernel size
+        self.kmeans_k = 3 # Number of clusters for k-means thresholding
 
     def load_image(self, image_num):
         image_path = f'{self.image_folder_path}/input ({image_num}).jpg'
@@ -49,13 +50,6 @@ class DocumentAligner:
     
     def otsu_threshold(self, image, image_num):
         otsuThresh = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-
-        # trying artificial floor
-        # initialThresh, _ = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        # print(f"Otsu's threshold value: {initialThresh}")
-        # thresh_val = max(initialThresh, 120)  # Set a minimum threshold value
-        # _, otsuThresh = cv2.threshold(image, thresh_val, 255, cv2.THRESH_BINARY)
-
         if self.debug:
             cv2.imwrite(f'{self.debug_dir}/{image_num}/otsuThresh.jpg', otsuThresh)
 
@@ -67,6 +61,19 @@ class DocumentAligner:
         if self.debug:
             cv2.imwrite(f'{self.debug_dir}/{image_num}/cleaned_threshold.jpg', cleaned)
         return cleaned
+    
+    def kmeans_threshold(self, img, image_num):
+        pixels = img.reshape(-1, 1).astype(np.float32)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
+        _, labels, centers = cv2.kmeans(pixels, self.kmeans_k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+
+        # keep only the brightest cluster
+        document_label = np.argmax(centers)
+        thresh = (labels.reshape(img.shape) == document_label).astype(np.uint8) * 255
+        if self.debug:
+            cv2.imwrite(f'{self.debug_dir}/{image_num}/kmeans_thresh.jpg', thresh)
+
+        return thresh
     
     def get_document_contour(self, image, threshold, image_num):
         contours, _ = cv2.findContours(threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -141,12 +148,11 @@ class DocumentAligner:
 
         # Preprocessing and Binarization
         small = self.rescale(image_gray, image_num)
-        blurred = self.bilateral_blur(small, image_num)
-        otsuThreshold = self.otsu_threshold(blurred, image_num)
-        cleaned = self.clean_threshold(otsuThreshold, image_num)
+        blurred_small = self.bilateral_blur(small, image_num)
+        thresh = self.kmeans_threshold(blurred_small, image_num)
 
         # Feature and Contour Extraction
-        contour = self.get_document_contour(image_color, cleaned, image_num)
+        contour = self.get_document_contour(image_color, thresh, image_num)
 
         # Corner Detection / Localization
         hull = self.get_hull(contour)
