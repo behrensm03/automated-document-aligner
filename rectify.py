@@ -1,10 +1,7 @@
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
 import argparse
 import os
-
-
 
 class DocumentAligner:
     def __init__(self, image_folder_path, out_dir, debug_dir=""):
@@ -14,60 +11,49 @@ class DocumentAligner:
         self.debug = debug_dir != ""
 
         # Preprocessing parameters
-        self.blur_ksize = (7,7) # Gaussian Blur
-        self.bilateral_ksize = 9 # Bilateral Filter
-        self.downscale_factor = 0.25 # Scaling down the image
-        self.clean_kernel_size = 3 # Morphological opening kernel size
+        self.bilateral_ksize = 9 # Bilateral Filter kernel size
+        self.downscale_factor = 0.25 # scale the image down
         self.kmeans_k = 3 # Number of clusters for k-means thresholding
 
     def load_image(self, image_num):
-        image_path = f'{self.image_folder_path}/input ({image_num}).jpg'
-        image = cv2.imread(image_path)
-        image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        # Allowing the input images to come in either "input (1).jpg" or "input1.jpg" format
+        possible_image_paths = [
+            f'{self.image_folder_path}/input ({image_num}).jpg',
+            f'{self.image_folder_path}/input{image_num}.jpg',
+        ]
+        for image_path in possible_image_paths:
+            if os.path.exists(image_path):
+                image = cv2.imread(image_path)
+                image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-        return image, image_gray
+                return image, image_gray
+
+        raise FileNotFoundError(f"Could not find image for number {image_num} in expected formats.")
     
     def rescale(self, image, image_num):
+        # Rescale the image down to speed up processing and reduce noise
         small = cv2.resize(image, None, fx=self.downscale_factor, fy=self.downscale_factor)
         if self.debug:
             cv2.imwrite(f'{self.debug_dir}/{image_num}/small.jpg', small)
 
         return small
     
-    def gaussian_blur(self, image, image_num):
-        blurred = cv2.GaussianBlur(image.copy(), ksize=self.blur_ksize, sigmaX=-1)
-        if self.debug:
-            cv2.imwrite(f'{self.debug_dir}/{image_num}/blurred.jpg', blurred)
-
-        return blurred
-    
     def bilateral_blur(self, image, image_num):
+        # Apply bilateral filter to reduce noise while keeping edges sharp
         blurred = cv2.bilateralFilter(image.copy(), self.bilateral_ksize, 75, 75)
         if self.debug:
             cv2.imwrite(f'{self.debug_dir}/{image_num}/bilateral_blurred.jpg', blurred)
 
         return blurred
     
-    def otsu_threshold(self, image, image_num):
-        otsuThresh = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-        if self.debug:
-            cv2.imwrite(f'{self.debug_dir}/{image_num}/otsuThresh.jpg', otsuThresh)
-
-        return otsuThresh
-    
-    def clean_threshold(self, otsuThreshold, image_num):
-        kernel = np.ones((self.clean_kernel_size, self.clean_kernel_size), np.uint8)
-        cleaned = cv2.morphologyEx(otsuThreshold, cv2.MORPH_OPEN, kernel)
-        if self.debug:
-            cv2.imwrite(f'{self.debug_dir}/{image_num}/cleaned_threshold.jpg', cleaned)
-        return cleaned
-    
     def kmeans_threshold(self, img, image_num):
+        # Return a binary image where the document is white and the background is black, 
+        # using k-means clustering on pixel intensities.
         pixels = img.reshape(-1, 1).astype(np.float32)
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
         _, labels, centers = cv2.kmeans(pixels, self.kmeans_k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
 
-        # keep only the brightest cluster
+        # keep only the brightest cluster, assume that is the document
         document_label = np.argmax(centers)
         thresh = (labels.reshape(img.shape) == document_label).astype(np.uint8) * 255
         if self.debug:
@@ -76,6 +62,7 @@ class DocumentAligner:
         return thresh
     
     def get_document_contour(self, image, threshold, image_num):
+        # Find contours in the thresholded image, and keep only the largest one, assuming it is the document.
         contours, _ = cv2.findContours(threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         maxContour = max(contours, key=cv2.contourArea)
         if self.debug:
@@ -84,13 +71,14 @@ class DocumentAligner:
             cv2.drawContours(output, [maxContour_full], -1, (255, 0, 255), 2)
             cv2.imwrite(f'{self.debug_dir}/{image_num}/contours.jpg', output)
 
-
         return maxContour
     
     def get_hull(self, contour):
+        # perform convex hull to smooth out the contour and get rid of any small imperfections
         return cv2.convexHull(contour)
     
     def get_approx_points(self, hull, image, image_num):
+        # Find a set of 4 points that approximate the hull. 
         for scale in [0.02, 0.03, 0.04, 0.05, 0.06, 0.1]:
             epsilon = scale * cv2.arcLength(hull, True)
             approx = cv2.approxPolyDP(hull, epsilon, True)
@@ -105,9 +93,11 @@ class DocumentAligner:
         raise ValueError(f"Could not find 4 points for image {image_num}")
     
     def scale_up_points(self, points):
+        # Revert the corner points back to the original image scale
         return (points / self.downscale_factor).astype(np.int32)
     
     def order_points(self, image, image_num, points):
+        # Deterministically order the corner points in the clockwise order: top-left, top-right, bottom-right, bottom-left
         sums = points.sum(axis=2)
         diffs = np.diff(points, axis=2)
         top_left = points[np.argmin(sums)]
@@ -130,6 +120,7 @@ class DocumentAligner:
         return ordered
     
     def apply_homography(self, image, ordered_points):
+        # Warp the image using the homography defined by the detected corner points.
         dst_points = np.array([
             [0, 0],        # top-left
             [425-1, 0],    # top-right
@@ -143,18 +134,21 @@ class DocumentAligner:
 
     def run(self, image_num):
         if self.debug:
+            # Ensure the debug directory for this image exists, if we are in debug mode
             os.makedirs(f'{self.debug_dir}/{image_num}', exist_ok=True)
+
+        # Load the image
         image_color, image_gray = self.load_image(image_num)
 
-        # Preprocessing and Binarization
+        # Part 1: Preprocessing and Binarization
         small = self.rescale(image_gray, image_num)
         blurred_small = self.bilateral_blur(small, image_num)
         thresh = self.kmeans_threshold(blurred_small, image_num)
 
-        # Feature and Contour Extraction
+        # Part 2: Feature and Contour Extraction
         contour = self.get_document_contour(image_color, thresh, image_num)
 
-        # Corner Detection / Localization
+        # Part 3: Corner Detection / Localization
         hull = self.get_hull(contour)
         approx_points = self.get_approx_points(hull, image_color, image_num)
         approx_full = self.scale_up_points(approx_points)
@@ -165,23 +159,23 @@ class DocumentAligner:
 
         # save the final image to the output directory
         os.makedirs(self.out_dir, exist_ok=True)
-        cv2.imwrite(f'{self.out_dir}/{image_num}_rectified.jpg', warped)
+        cv2.imwrite(f'{self.out_dir}/output{image_num}.jpg', warped)
         if self.debug:
             cv2.imwrite(f'{self.debug_dir}/{image_num}/final_warped.jpg', warped)
         print(f'Processed image {image_num}')
 
-# TODO: landscape?
-# TODO: handle error thrown 
-# TODO: kmeans?
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    # Required argument to point to input directory
     parser.add_argument(
-        '--image_folder_path',
+        'image_folder_path',
         type=str,
         help="path to the folder containing images",
-        default="synthetic_data"
     )
+
+    # Optional arguments for specifying where to write outputs, where to write debug info
+    # or to only run a subset of the input images.
     parser.add_argument(
         '--out_dir',
         type=str,
@@ -211,6 +205,9 @@ if __name__ == "__main__":
     
     rectifier = DocumentAligner(args.image_folder_path, args.out_dir, args.debug_dir)
     for i in range(args.start_idx, args.end_idx + 1):
-        rectifier.run(i)
+        try:
+            rectifier.run(i)
+        except Exception as e:
+            print(f"Error processing image {i}: {e}")
     
 
